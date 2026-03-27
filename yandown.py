@@ -7,6 +7,8 @@ import locale
 import re
 from tqdm import tqdm
 
+API_BASE = "https://cloud-api.yandex.net/v1/disk/public/resources"
+
 class Localization:
     def __init__(self):
         self.set_locale()
@@ -48,8 +50,16 @@ class Localization:
                 'ru': "Ошибка: Вы должны указать либо ссылку, либо файл со ссылками."
             },
             'resource_fetch_error': {
-                'en': "Error: Unable to fetch resource details for {higher_level_link}. Status code: {status_code}",
-                'ru': "Error: Не удалось получить данные ресурса для {higher_level_link}. Код состояния: {status_code}"
+                'en': "Error: Unable to fetch resource details for {link}. Status code: {status_code}",
+                'ru': "Error: Не удалось получить данные ресурса для {link}. Код состояния: {status_code}"
+            },
+            'downloading_folder': {
+                'en': "Downloading folder: {name} ({count} files)",
+                'ru': "Скачивание папки: {name} ({count} файлов)"
+            },
+            'folder_complete': {
+                'en': "Folder download complete: {name}",
+                'ru': "Загрузка папки завершена: {name}"
             },
             'arg_help': {
                 'en': {
@@ -77,9 +87,24 @@ class YandexDiskDownloader:
         self.custom_name = custom_name
         self.localization = Localization()
 
+    def _parse_link(self):
+        """Parse link into base public key and optional subpath."""
+        parsed = urllib.parse.urlparse(self.link)
+        path_parts = parsed.path.strip('/').split('/')
+        # Format: /d/<hash>/optional/sub/path or /i/<hash>/...
+        if len(path_parts) >= 2:
+            base_path = '/' + '/'.join(path_parts[:2])
+            base_url = urllib.parse.urlunparse(parsed._replace(path=base_path))
+            sub_parts = path_parts[2:]
+            if sub_parts:
+                subpath = '/' + '/'.join(urllib.parse.unquote(p) for p in sub_parts)
+                return base_url, subpath
+            return base_url, None
+        return self.link, None
+
     def safe_file_name(self, name):
         safe_name = re.sub(r'[\/:*?"<>|]', '_', name)
-        
+
         try:
             with open(os.path.join(self.download_location, safe_name), 'w') as test_file:
                 pass
@@ -90,9 +115,6 @@ class YandexDiskDownloader:
         return name
 
     def set_locale(self):
-        """
-        Sets the locale to en_US.UTF-8 if the current locale is not UTF-8.
-        """
         try:
             current_locale = locale.getdefaultlocale()
             if 'UTF-8' not in current_locale[1]:
@@ -102,86 +124,136 @@ class YandexDiskDownloader:
             print(self.localization.get_message('locale_set_error'))
             sys.exit(1)
 
+    def _get_resource_info(self, public_key, path=None, limit=100, offset=0):
+        """Get resource metadata from Yandex API."""
+        params = {"public_key": public_key, "limit": limit, "offset": offset}
+        if path:
+            params["path"] = path
+        return requests.get(API_BASE, params=params)
+
+    def _get_download_url(self, public_key, path=None):
+        """Get direct download URL for a file."""
+        params = {"public_key": public_key}
+        if path:
+            params["path"] = path
+        response = requests.get(API_BASE + "/download", params=params)
+        if response.status_code == 200:
+            return response.json().get("href")
+        return None
+
+    def _collect_all_items(self, public_key, path=None):
+        """Collect all items from a folder with pagination."""
+        items = []
+        offset = 0
+        limit = 100
+        while True:
+            response = self._get_resource_info(public_key, path=path, limit=limit, offset=offset)
+            if response.status_code != 200:
+                print(self.localization.get_message('resource_fetch_error').format(
+                    link=self.link, status_code=response.status_code))
+                return None
+            data = response.json()
+            batch = data.get('_embedded', {}).get('items', [])
+            if not batch:
+                break
+            items.extend(batch)
+            offset += limit
+        return items
+
+    def _download_file(self, download_url, save_path):
+        """Download a single file with progress bar."""
+        os.makedirs(os.path.dirname(save_path), exist_ok=True)
+        download_response = requests.get(download_url, stream=True)
+        total_size = int(download_response.headers.get('content-length', 0))
+        desc = os.path.basename(save_path)
+
+        with open(save_path, "wb") as file, tqdm(
+            total=total_size or None, unit='B', unit_scale=True,
+            desc=desc, dynamic_ncols=True, miniters=1
+        ) as pbar:
+            for chunk in download_response.iter_content(chunk_size=1024):
+                if chunk:
+                    file.write(chunk)
+                    file.flush()
+                    pbar.update(len(chunk))
+
+    def _download_folder(self, public_key, path, save_dir):
+        """Recursively download all files from a folder."""
+        items = self._collect_all_items(public_key, path=path)
+        if items is None:
+            return
+
+        for item in items:
+            item_name = self.safe_file_name(item['name'])
+            item_path = item['path']  # API returns the path relative to the public root
+
+            if item['type'] == 'file':
+                download_url = item.get('file')
+                if not download_url:
+                    download_url = self._get_download_url(public_key, path=item_path)
+                if download_url:
+                    save_path = os.path.join(save_dir, item_name)
+                    self._download_file(download_url, save_path)
+            elif item['type'] == 'dir':
+                sub_dir = os.path.join(save_dir, item_name)
+                self._download_folder(public_key, item_path, sub_dir)
+
     def download(self):
         self.set_locale()
 
-        def get_file_name_from_link(link):
-            return link.split('/')[-1]
+        public_key, subpath = self._parse_link()
 
-        original_file_name = get_file_name_from_link(self.link)
+        # Get resource info to determine type (file or dir)
+        response = self._get_resource_info(public_key, path=subpath)
 
-        url = f"https://cloud-api.yandex.net/v1/disk/public/resources/download?public_key={self.link}"
-        response = requests.get(url)
+        if response.status_code != 200:
+            # Fallback: try the full link as public_key directly (for simple /i/ links)
+            response = self._get_resource_info(self.link)
+            if response.status_code != 200:
+                print(self.localization.get_message('resource_fetch_error').format(
+                    link=self.link, status_code=response.status_code))
+                return
+            public_key = self.link
+            subpath = None
 
-        if response.status_code == 404:
-            higher_level_link = '/'.join(self.link.split('/')[:-1])
-            offset = 0
-            limit = 100
-            download_url = None
+        resource = response.json()
+        resource_type = resource.get('type')
 
-            while True:
-                url = f"https://cloud-api.yandex.net/v1/disk/public/resources?public_key={higher_level_link}&limit={limit}&offset={offset}"
-                response = requests.get(url)
-                if response.status_code == 200:
-                    response_json = response.json()
-                    items = response_json.get('_embedded', {}).get('items', [])
-                    if not items:
-                        break
-
+        if resource_type == 'dir':
+            folder_name = self.custom_name or resource.get('name', 'download')
+            save_dir = os.path.join(self.download_location, folder_name)
+            total = resource.get('_embedded', {}).get('total', 0)
+            print(self.localization.get_message('downloading_folder').format(name=folder_name, count=total))
+            self._download_folder(public_key, subpath, save_dir)
+            print(self.localization.get_message('folder_complete').format(name=folder_name))
+        else:
+            # Single file
+            download_url = self._get_download_url(public_key, path=subpath)
+            if not download_url:
+                # Fallback: search in parent folder
+                original_file_name = urllib.parse.unquote(self.link.split('/')[-1])
+                higher_level_link = '/'.join(self.link.split('/')[:-1])
+                items = self._collect_all_items(higher_level_link)
+                if items:
                     for item in items:
                         if item['type'] == 'file' and item['name'] == original_file_name:
                             download_url = item['file']
                             break
 
-                    if download_url:
-                        break
-
-                    offset += limit
-                else:
-                    print(self.localization.get_message('resource_fetch_error').format(higher_level_link=higher_level_link, status_code=response.status_code))
+                if not download_url:
+                    print(self.localization.get_message('file_not_found').format(
+                        original_file_name=original_file_name, link=self.link))
                     return
 
-            if not download_url:
-                print(self.localization.get_message('file_not_found').format(original_file_name=original_file_name, link=self.link))
-                return
-        else:
-            response_json = response.json()
-            download_url = response_json.get("href")
-            if not download_url:
-                print(self.localization.get_message('download_url_not_found').format(link=self.link))
-                return
+            original_file_name = urllib.parse.unquote(download_url.split("filename=")[1].split("&")[0])
+            file_extension = os.path.splitext(original_file_name)[1]
+            file_name = self.custom_name + file_extension if self.custom_name else original_file_name
+            safe_name = self.safe_file_name(file_name)
+            save_path = os.path.join(self.download_location, safe_name)
 
-        original_file_name = urllib.parse.unquote(download_url.split("filename=")[1].split("&")[0])
-        file_extension = os.path.splitext(original_file_name)[1]
-        file_name = self.custom_name + file_extension if self.custom_name else original_file_name
-        safe_file_name = self.safe_file_name(file_name)
-        save_path = os.path.join(self.download_location, safe_file_name)
-
-        # Create download directory if it does not exist
-        os.makedirs(self.download_location, exist_ok=True)
-
-        # Start the download with progress tracking
-        download_response = requests.get(download_url, stream=True)
-        total_size = int(download_response.headers.get('content-length', 0))  # Get file size from headers (if available)
-
-        if total_size == 0:
-            # Если общий объем неизвестен, создаем бесконечный прогресс-бар
-            with open(save_path, "wb") as file, tqdm(unit='B', unit_scale=True, desc=safe_file_name, dynamic_ncols=True, miniters=1) as pbar:
-                for chunk in download_response.iter_content(chunk_size=1024):
-                    if chunk:
-                        file.write(chunk)
-                        file.flush()
-                        pbar.update(len(chunk))
-        else:
-            # Если общий объем известен, показываем прогресс
-            with open(save_path, "wb") as file, tqdm(total=total_size, unit='B', unit_scale=True, desc=safe_file_name, dynamic_ncols=True, miniters=1) as pbar:
-                for chunk in download_response.iter_content(chunk_size=1024):
-                    if chunk:
-                        file.write(chunk)
-                        file.flush()
-                        pbar.update(len(chunk))
-
-        print(self.localization.get_message('download_complete'))
+            os.makedirs(self.download_location, exist_ok=True)
+            self._download_file(download_url, save_path)
+            print(self.localization.get_message('download_complete'))
 
 def download_from_file(file_path, download_location):
     with open(file_path, 'r') as file:
@@ -214,7 +286,6 @@ if __name__ == "__main__":
 
     args = parser.parse_args()
 
-    # Приоритизация ссылки: сначала аргумент -l, затем позиционный аргумент
     link = args.link or args.positional_link
 
     if args.file:
@@ -224,4 +295,3 @@ if __name__ == "__main__":
         downloader.download()
     else:
         print(localization.get_message('provide_link_or_file'))
-
