@@ -4,7 +4,7 @@
 
 ## English
 
-This script allows downloading files from Yandex Disk using public links. The script can work with a single link or with a text file containing a list of links and file names.
+This script allows downloading files and folders from Yandex Disk using public links. The script can work with a single link or with a text file containing a list of links and file names. When a folder link is provided, all files are downloaded recursively, preserving the directory structure.
 
 ### Requirements
 
@@ -21,9 +21,9 @@ This script allows downloading files from Yandex Disk using public links. The sc
 
 ### Usage
 
-#### Download a single file
+#### Download a single file or folder
 
-To download a single file from Yandex Disk, use the following command:
+To download a single file or an entire folder from Yandex Disk, use the following command:
 
 ```bash
 python yandown.py -l <link> -d <download_location>
@@ -56,7 +56,7 @@ https://disk.yandex.ru/d/example_folder/file.jpg CustomFileName
 
 ### Command line arguments
 
-- `-l, --link`: Link to a Yandex Disk file.
+- `-l, --link`: Link to a Yandex Disk file or folder.
 - `-f, --file`: Path to a text file with Yandex Disk links.
 - `-d, --download_location`: Path to save the downloaded files (optional, default is the current directory).
 
@@ -80,11 +80,19 @@ python yandown.py -f "/path/to/links.txt" -d "/path/to/save"
 python yandown.py "https://disk.yandex.ru/i/example1"
 ```
 
+#### Download a folder
+
+```bash
+python yandown.py "https://disk.yandex.ru/d/example_hash/Folder%20Name" -d "/path/to/save"
+```
+
+All files from the folder (including subfolders) will be downloaded with the directory structure preserved.
+
 ---
 
 ## Русский
 
-Этот скрипт позволяет загружать файлы с Яндекс.Диска по публичным ссылкам. Скрипт может работать как с одной ссылкой, так и с текстовым файлом, содержащим список ссылок и названий файлов.
+Этот скрипт позволяет загружать файлы и папки с Яндекс.Диска по публичным ссылкам. Скрипт может работать как с одной ссылкой, так и с текстовым файлом, содержащим список ссылок и названий файлов. При указании ссылки на папку все файлы скачиваются рекурсивно с сохранением структуры директорий.
 
 ### Требования
 
@@ -101,9 +109,9 @@ python yandown.py "https://disk.yandex.ru/i/example1"
 
 ### Использование
 
-#### Загрузка одного файла
+#### Загрузка одного файла или папки
 
-Для загрузки одного файла с Яндекс.Диска используйте следующую команду:
+Для загрузки одного файла или целой папки с Яндекс.Диска используйте следующую команду:
 
 ```bash
 python yandown.py -l <ссылка> -d <путь_для_сохранения>
@@ -136,7 +144,7 @@ https://disk.yandex.ru/d/example_folder/file.jpg НазваниеФайла
 
 ### Аргументы командной строки
 
-- `-l, --link`: Ссылка на файл Яндекс.Диска.
+- `-l, --link`: Ссылка на файл или папку Яндекс.Диска.
 - `-f, --file`: Путь к текстовому файлу с ссылками на файлы Яндекс.Диска.
 - `-d, --download_location`: Путь для сохранения загруженных файлов (необязательно, по умолчанию текущая директория).
 
@@ -159,3 +167,11 @@ python yandown.py -f "/path/to/links.txt" -d "/path/to/save"
 ```bash
 python yandown.py "https://disk.yandex.ru/i/example1"
 ```
+
+#### Загрузка папки
+
+```bash
+python yandown.py "https://disk.yandex.ru/d/example_hash/Название%20Папки" -d "/path/to/save"
+```
+
+Все файлы из папки (включая вложенные подпапки) будут загружены с сохранением структуры директорий.

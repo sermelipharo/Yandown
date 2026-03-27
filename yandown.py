@@ -1,3 +1,4 @@
+#!/usr/bin/env python3
 import argparse
 import requests
 import urllib.parse
@@ -14,7 +15,10 @@ class Localization:
         self.set_locale()
 
     def set_locale(self):
-        self.current_locale = locale.getdefaultlocale()[0]
+        try:
+            self.current_locale = locale.getlocale()[0]
+        except ValueError:
+            self.current_locale = None
 
     def is_ru_locale(self):
         return self.current_locale == 'ru_RU'
@@ -116,8 +120,8 @@ class YandexDiskDownloader:
 
     def set_locale(self):
         try:
-            current_locale = locale.getdefaultlocale()
-            if 'UTF-8' not in current_locale[1]:
+            encoding = locale.getencoding()
+            if 'UTF-8' not in encoding:
                 print(self.localization.get_message('locale_not_utf8'))
                 locale.setlocale(locale.LC_ALL, 'en_US.UTF-8')
         except locale.Error:
