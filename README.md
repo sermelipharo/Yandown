@@ -16,7 +16,7 @@ This script allows downloading files and folders from Yandex Disk using public l
 1. Clone the repository or download the script.
 2. Install the required libraries:
     ```bash
-    pip install requests tqdm
+    pip install -r requirements.txt
     ```
 
 ### Usage
@@ -112,7 +112,7 @@ Album links (`/a/`) are not exposed through the public Yandex Disk API, so the s
 1. Склонируйте репозиторий или скачайте скрипт.
 2. Установите необходимые библиотеки:
     ```bash
-    pip install requests tqdm
+    pip install -r requirements.txt
     ```
 
 ### Использование
