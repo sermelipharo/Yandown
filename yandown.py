@@ -4,11 +4,15 @@ import requests
 import urllib.parse
 import os
 import sys
+import json
 import locale
 import re
 from tqdm import tqdm
 
 API_BASE = "https://cloud-api.yandex.net/v1/disk/public/resources"
+WEB_BASE = "https://disk.yandex.ru"
+BROWSER_UA = ("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+              "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36")
 
 class Localization:
     def __init__(self):
@@ -53,9 +57,21 @@ class Localization:
                 'en': "Error: You must provide either a link or a file containing links.",
                 'ru': "Ошибка: Вы должны указать либо ссылку, либо файл со ссылками."
             },
-            'album_not_supported': {
-                'en': "Error: {link} is an album link (/a/). Albums are not available through the public Yandex Disk API, so they cannot be downloaded. Ask the owner to share the content as a folder (/d/ link) or download the album from the browser.",
-                'ru': "Ошибка: {link} — это ссылка на альбом (/a/). Альбомы недоступны через публичный API Яндекс.Диска, поэтому скачать их нельзя. Попросите владельца поделиться содержимым как папкой (ссылка вида /d/) или скачайте альбом через браузер."
+            'album_fetch_error': {
+                'en': "Error: Unable to fetch album data for {link} (albums are not available through the public API, and the web fallback failed — possibly a captcha). Ask the owner to share the content as a folder (/d/ link) or download the album from the browser.",
+                'ru': "Ошибка: Не удалось получить данные альбома для {link} (альбомы недоступны через публичный API, а обходной путь через веб не сработал — возможно, капча). Попросите владельца поделиться содержимым как папкой (ссылка вида /d/) или скачайте альбом через браузер."
+            },
+            'downloading_album': {
+                'en': "Downloading album: {name} ({count} files)",
+                'ru': "Скачивание альбома: {name} ({count} файлов)"
+            },
+            'album_complete': {
+                'en': "Album download complete: {name}",
+                'ru': "Загрузка альбома завершена: {name}"
+            },
+            'album_item_url_error': {
+                'en': "Warning: Unable to get download URL for {name}, skipping.",
+                'ru': "Warning: Не удалось получить ссылку для скачивания {name}, пропускаю."
             },
             'resource_fetch_error': {
                 'en': "Error: Unable to fetch resource details for {link}. Status code: {status_code}",
@@ -206,12 +222,97 @@ class YandexDiskDownloader:
                 sub_dir = os.path.join(save_dir, item_name)
                 self._download_folder(public_key, item_path, sub_dir)
 
+    def _fetch_album_state(self, session):
+        """Load the album web page and extract the embedded store-prefetch JSON.
+
+        Albums (/a/ links) are not exposed through the public API, so the only
+        way in is the same internal API the web client uses: the page embeds the
+        first portion of items plus an sk token for further requests.
+        """
+        response = session.get(self.link)
+        if response.status_code != 200:
+            return None
+        match = re.search(r'<script[^>]*id="store-prefetch"[^>]*>(.*?)</script>', response.text, re.S)
+        if not match:
+            return None
+        try:
+            return json.loads(match.group(1))
+        except json.JSONDecodeError:
+            return None
+
+    def _album_api(self, session, sk, model, payload):
+        """Call an internal web API model (e.g. album-download-url)."""
+        payload = dict(payload, sk=sk)
+        response = session.post(
+            WEB_BASE + "/public/api/" + model,
+            data=json.dumps(payload),
+            headers={"Content-Type": "text/plain"},
+        )
+        if response.status_code != 200:
+            return None
+        body = response.json()
+        if body.get('error'):
+            return None
+        return body.get('data', body)
+
+    def _download_album(self):
+        session = requests.Session()
+        session.headers.update({
+            'User-Agent': BROWSER_UA,
+            'Origin': WEB_BASE,
+            'Referer': self.link,
+        })
+
+        state = self._fetch_album_state(session)
+        if not state:
+            print(self.localization.get_message('album_fetch_error').format(link=self.link))
+            return
+
+        sk = state['environment']['sk']
+        resources = state['resources']
+        album = resources[state['rootResourceId']]
+        album_hash = album['hash']
+        items = [resources[child] for child in album.get('children', []) if child in resources]
+
+        # Paginate: fetch-album-list uses the last item's albumItemId as a cursor
+        while not album.get('completed', True):
+            data = self._album_api(session, sk, 'fetch-album-list', {
+                'hash': album_hash,
+                'lastItemId': items[-1]['albumItemId'] if items else None,
+            })
+            if data is None:
+                print(self.localization.get_message('album_fetch_error').format(link=self.link))
+                return
+            batch = data.get('resources', [])
+            items.extend(batch)
+            if data.get('completed', True) or not batch:
+                break
+
+        files = [item for item in items if item.get('type') == 'file']
+        album_name = self.custom_name or album.get('name', 'album')
+        save_dir = os.path.join(self.download_location, self.safe_file_name(album_name))
+        print(self.localization.get_message('downloading_album').format(name=album_name, count=len(files)))
+
+        for item in files:
+            data = self._album_api(session, sk, 'album-download-url', {
+                'hash': album_hash,
+                'itemId': item['albumItemId'],
+            })
+            download_url = data.get('url') if data else None
+            if not download_url:
+                print(self.localization.get_message('album_item_url_error').format(name=item.get('name', '?')))
+                continue
+            save_path = os.path.join(save_dir, self.safe_file_name(item['name']))
+            self._download_file(download_url, save_path)
+
+        print(self.localization.get_message('album_complete').format(name=album_name))
+
     def download(self):
         self.set_locale()
 
         parsed_path = urllib.parse.urlparse(self.link).path
         if parsed_path.strip('/').split('/')[0] == 'a':
-            print(self.localization.get_message('album_not_supported').format(link=self.link))
+            self._download_album()
             return
 
         public_key, subpath = self._parse_link()

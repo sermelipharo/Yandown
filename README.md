@@ -88,9 +88,13 @@ python yandown.py "https://disk.yandex.ru/d/example_hash/Folder%20Name" -d "/pat
 
 All files from the folder (including subfolders) will be downloaded with the directory structure preserved.
 
-#### Note on albums
+#### Download an album
 
-Album links (`https://disk.yandex.ru/a/...`) are not supported: albums are not exposed through the public Yandex Disk API. Ask the owner to share the content as a folder (`/d/` link) or download the album from the browser.
+```bash
+python yandown.py "https://disk.yandex.ru/a/example_hash" -d "/path/to/save"
+```
+
+Album links (`/a/`) are not exposed through the public Yandex Disk API, so the script uses the same internal web API as the browser client. All album files are downloaded into a folder named after the album. Note: since this API is unofficial, Yandex may change it without notice.
 
 ---
 
@@ -180,6 +184,10 @@ python yandown.py "https://disk.yandex.ru/d/example_hash/Название%20Па
 
 Все файлы из папки (включая вложенные подпапки) будут загружены с сохранением структуры директорий.
 
-#### Примечание об альбомах
+#### Загрузка альбома
 
-Ссылки на альбомы (`https://disk.yandex.ru/a/...`) не поддерживаются: альбомы недоступны через публичный API Яндекс.Диска. Попросите владельца поделиться содержимым как папкой (ссылка вида `/d/`) или скачайте альбом через браузер.
+```bash
+python yandown.py "https://disk.yandex.ru/a/example_hash" -d "/path/to/save"
+```
+
+Ссылки на альбомы (`/a/`) недоступны через публичный API Яндекс.Диска, поэтому скрипт использует тот же внутренний веб-API, что и браузерный клиент. Все файлы альбома скачиваются в папку с названием альбома. Примечание: так как этот API неофициальный, Яндекс может изменить его без предупреждения.
