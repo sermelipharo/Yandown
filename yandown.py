@@ -53,6 +53,10 @@ class Localization:
                 'en': "Error: You must provide either a link or a file containing links.",
                 'ru': "Ошибка: Вы должны указать либо ссылку, либо файл со ссылками."
             },
+            'album_not_supported': {
+                'en': "Error: {link} is an album link (/a/). Albums are not available through the public Yandex Disk API, so they cannot be downloaded. Ask the owner to share the content as a folder (/d/ link) or download the album from the browser.",
+                'ru': "Ошибка: {link} — это ссылка на альбом (/a/). Альбомы недоступны через публичный API Яндекс.Диска, поэтому скачать их нельзя. Попросите владельца поделиться содержимым как папкой (ссылка вида /d/) или скачайте альбом через браузер."
+            },
             'resource_fetch_error': {
                 'en': "Error: Unable to fetch resource details for {link}. Status code: {status_code}",
                 'ru': "Error: Не удалось получить данные ресурса для {link}. Код состояния: {status_code}"
@@ -204,6 +208,11 @@ class YandexDiskDownloader:
 
     def download(self):
         self.set_locale()
+
+        parsed_path = urllib.parse.urlparse(self.link).path
+        if parsed_path.strip('/').split('/')[0] == 'a':
+            print(self.localization.get_message('album_not_supported').format(link=self.link))
+            return
 
         public_key, subpath = self._parse_link()
 

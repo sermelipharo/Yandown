@@ -88,6 +88,10 @@ python yandown.py "https://disk.yandex.ru/d/example_hash/Folder%20Name" -d "/pat
 
 All files from the folder (including subfolders) will be downloaded with the directory structure preserved.
 
+#### Note on albums
+
+Album links (`https://disk.yandex.ru/a/...`) are not supported: albums are not exposed through the public Yandex Disk API. Ask the owner to share the content as a folder (`/d/` link) or download the album from the browser.
+
 ---
 
 ## Русский
@@ -175,3 +179,7 @@ python yandown.py "https://disk.yandex.ru/d/example_hash/Название%20Па
 ```
 
 Все файлы из папки (включая вложенные подпапки) будут загружены с сохранением структуры директорий.
+
+#### Примечание об альбомах
+
+Ссылки на альбомы (`https://disk.yandex.ru/a/...`) не поддерживаются: альбомы недоступны через публичный API Яндекс.Диска. Попросите владельца поделиться содержимым как папкой (ссылка вида `/d/`) или скачайте альбом через браузер.
