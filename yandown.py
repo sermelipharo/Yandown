@@ -10,9 +10,63 @@ import re
 from tqdm import tqdm
 
 API_BASE = "https://cloud-api.yandex.net/v1/disk/public/resources"
-WEB_BASE = "https://disk.yandex.ru"
+DEFAULT_WEB_BASE = "https://disk.yandex.ru"
 BROWSER_UA = ("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
               "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36")
+
+# Yandex Disk is served from a lot of regional domains (disk.yandex.ru/.com/.by/.kz/
+# .com.tr/...), from disk.360.yandex.* and from the old yadi.sk shortener.
+YANDEX_HOST_RE = re.compile(r'(^|\.)(yandex\.[a-z.]{2,6}|yadi\.sk)$', re.I)
+# The web client prefixes a public hash with its resource type: d_<hash>, i_<hash>, a_<hash>.
+CLIENT_ID_RE = re.compile(r'^([a-z])_(.+)$')
+
+
+def base_url(link):
+    """Return scheme://host of a link, or the default web host if it has none."""
+    parsed = urllib.parse.urlparse(link)
+    if parsed.scheme and parsed.netloc:
+        return urllib.parse.urlunparse((parsed.scheme, parsed.netloc, '', '', '', ''))
+    return DEFAULT_WEB_BASE
+
+
+def normalize_link(link):
+    """Bring a Yandex Disk link to the canonical public form.
+
+    Handles web-client links (https://disk.yandex.ru/client/aa/d_<hash>/ ->
+    https://disk.yandex.ru/d/<hash>), the old /public/?hash=<key> form, and strips
+    query strings, fragments and the trailing slash — the public API answers 404
+    for a public_key that ends with a slash. Links from any regional domain are
+    kept on their own domain; non-Yandex links are returned untouched.
+    """
+    link = link.strip()
+    if '://' not in link:
+        link = 'https://' + link
+
+    parsed = urllib.parse.urlparse(link)
+    if not YANDEX_HOST_RE.search(parsed.hostname or ''):
+        return link
+
+    parts = [part for part in parsed.path.split('/') if part]
+
+    # /public/?hash=<public key> — the key itself is the query parameter
+    if parts[:1] == ['public']:
+        hash_param = urllib.parse.parse_qs(parsed.query).get('hash')
+        if hash_param:
+            return hash_param[0]
+
+    # /client/aa/d_<hash>/<optional/sub/path> -> /d/<hash>/<optional/sub/path>
+    if parts[:1] == ['client']:
+        for index, part in enumerate(parts):
+            match = CLIENT_ID_RE.match(part)
+            if match:
+                parts = [match.group(1), match.group(2)] + parts[index + 1:]
+                break
+        else:
+            # e.g. /client/disk/... — a personal link, there is no public key to extract
+            return link
+
+    return urllib.parse.urlunparse(
+        parsed._replace(path='/' + '/'.join(parts), params='', query='', fragment=''))
 
 class Localization:
     def __init__(self):
@@ -73,6 +127,10 @@ class Localization:
                 'en': "Warning: Unable to get download URL for {name}, skipping.",
                 'ru': "Warning: Не удалось получить ссылку для скачивания {name}, пропускаю."
             },
+            'client_link_not_public': {
+                'en': "Error: {link} is a personal web-client link, it carries no public key. Open the file or folder in the browser, share it and use the resulting /d/, /i/ or /a/ link.",
+                'ru': "Ошибка: {link} — ссылка личного веб-клиента, в ней нет публичного ключа. Откройте файл или папку в браузере, поделитесь ими и используйте полученную ссылку вида /d/, /i/ или /a/."
+            },
             'resource_fetch_error': {
                 'en': "Error: Unable to fetch resource details for {link}. Status code: {status_code}",
                 'ru': "Error: Не удалось получить данные ресурса для {link}. Код состояния: {status_code}"
@@ -106,9 +164,10 @@ class Localization:
 
 class YandexDiskDownloader:
     def __init__(self, link, download_location, custom_name=None):
-        self.link = link
+        self.link = normalize_link(link)
         self.download_location = os.path.expanduser(download_location)
         self.custom_name = custom_name
+        self.web_base = base_url(self.link)
         self.localization = Localization()
 
     def _parse_link(self):
@@ -232,6 +291,10 @@ class YandexDiskDownloader:
         response = session.get(self.link)
         if response.status_code != 200:
             return None
+        # A link can redirect between domains (yadi.sk -> disk.yandex.ru, regional
+        # mirrors), and the sk token is only valid on the host that served the page.
+        self.web_base = base_url(response.url)
+        session.headers['Origin'] = self.web_base
         match = re.search(r'<script[^>]*id="store-prefetch"[^>]*>(.*?)</script>', response.text, re.S)
         if not match:
             return None
@@ -244,7 +307,7 @@ class YandexDiskDownloader:
         """Call an internal web API model (e.g. album-download-url)."""
         payload = dict(payload, sk=sk)
         response = session.post(
-            WEB_BASE + "/public/api/" + model,
+            self.web_base + "/public/api/" + model,
             data=json.dumps(payload),
             headers={"Content-Type": "text/plain"},
         )
@@ -259,7 +322,7 @@ class YandexDiskDownloader:
         session = requests.Session()
         session.headers.update({
             'User-Agent': BROWSER_UA,
-            'Origin': WEB_BASE,
+            'Origin': self.web_base,
             'Referer': self.link,
         })
 
@@ -311,7 +374,13 @@ class YandexDiskDownloader:
         self.set_locale()
 
         parsed_path = urllib.parse.urlparse(self.link).path
-        if parsed_path.strip('/').split('/')[0] == 'a':
+        first_segment = parsed_path.strip('/').split('/')[0]
+
+        if first_segment == 'client':
+            print(self.localization.get_message('client_link_not_public').format(link=self.link))
+            return
+
+        if first_segment == 'a':
             self._download_album()
             return
 
