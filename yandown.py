@@ -175,8 +175,20 @@ class Localization:
                 'ru': "Ошибка: Не удалось получить данные ресурса для {link}. Код состояния: {status_code}"
             },
             'downloading_folder': {
-                'en': "Downloading folder: {name} ({count} files)",
-                'ru': "Скачивание папки: {name} ({count} файлов)"
+                'en': "Downloading folder: {name} ({contents})",
+                'ru': "Скачивание папки: {name} ({contents})"
+            },
+            'folder_files': {
+                'en': "{count} files",
+                'ru': "{count} файлов"
+            },
+            'folder_dirs': {
+                'en': "{count} subfolders",
+                'ru': "{count} подпапок"
+            },
+            'folder_empty': {
+                'en': "empty",
+                'ru': "пусто"
             },
             'folder_complete': {
                 'en': "Folder download complete: {name}",
@@ -323,6 +335,16 @@ class YandexDiskDownloader:
                 sub_dir = os.path.join(save_dir, item_name)
                 self._download_folder(public_key, item_path, sub_dir)
 
+    def _describe_contents(self, items):
+        """Files and subfolders in the root of a folder, counted separately."""
+        counts = [
+            ('folder_files', sum(1 for item in items if item.get('type') == 'file')),
+            ('folder_dirs', sum(1 for item in items if item.get('type') == 'dir')),
+        ]
+        parts = [self.localization.get_message(key).format(count=count)
+                 for key, count in counts if count]
+        return ', '.join(parts) or self.localization.get_message('folder_empty')
+
     def _target_dir(self, name):
         """Directory the contents of a folder or album go into."""
         if self.flatten and os.path.basename(os.path.normpath(self.download_location)) == name:
@@ -461,8 +483,12 @@ class YandexDiskDownloader:
         if resource_type == 'dir':
             folder_name = self.custom_name or resource.get('name', 'download')
             save_dir = self._target_dir(folder_name)
-            total = resource.get('_embedded', {}).get('total', 0)
-            print(self.localization.get_message('downloading_folder').format(name=folder_name, count=total))
+            embedded = resource.get('_embedded', {})
+            root_items = embedded.get('items', [])
+            if embedded.get('total', len(root_items)) > len(root_items):
+                root_items = self._collect_all_items(public_key, path=subpath) or root_items
+            print(self.localization.get_message('downloading_folder').format(
+                name=folder_name, contents=self._describe_contents(root_items)))
             self._download_folder(public_key, subpath, save_dir)
             print(self.localization.get_message('folder_complete').format(name=folder_name))
             return True
