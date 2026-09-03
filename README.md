@@ -66,6 +66,17 @@ python yandown.py <link> <link> ~/Downloads/materials
 
 The download folder is created if it does not exist. When a single link is given and the destination folder is already named after the folder behind the link, its contents are saved straight into it instead of nesting `builds/builds`.
 
+#### Resuming interrupted downloads
+
+Downloads pick up where they stopped. Running the same command again skips files that are already complete and continues partial ones with a range request, so an interrupted folder does not have to be fetched from scratch:
+
+```bash
+python yandown.py <link> ~/Downloads/materials   # interrupted with Ctrl+C
+python yandown.py <link> ~/Downloads/materials   # continues where it stopped
+```
+
+A local file larger than the one on Yandex Disk is treated as stale and downloaded again. Use `--force` to re-download everything regardless of what is already on disk.
+
 #### Download from a file
 
 To download files from a list contained in a text file, use the following command:
@@ -91,6 +102,7 @@ https://disk.yandex.ru/d/example_folder/file.jpg CustomFileName
 - `-l, --link`: A Yandex Disk link, can be repeated.
 - `-f, --file`: Path to a text file with Yandex Disk links.
 - `-d, --download_location`: Path to save the downloaded files (optional, default is the current directory; takes precedence over a trailing path).
+- `--force`: Download everything again instead of resuming and skipping finished files.
 
 ### Examples
 
@@ -200,6 +212,17 @@ python yandown.py <ссылка> <ссылка> ~/Downloads/материалы
 
 Папка создаётся, если её нет. Если ссылка одна и папка назначения уже названа так же, как папка по ссылке, содержимое кладётся прямо в неё, без вложения вида `builds/builds`.
 
+#### Продолжение прерванных загрузок
+
+Загрузка продолжается с того места, где остановилась. Повторный запуск той же команды пропускает уже скачанные файлы и докачивает неполные через range-запрос, так что прерванную папку не нужно тянуть заново:
+
+```bash
+python yandown.py <ссылка> ~/Downloads/материалы   # прервали через Ctrl+C
+python yandown.py <ссылка> ~/Downloads/материалы   # продолжит с места остановки
+```
+
+Если локальный файл больше, чем файл на Яндекс.Диске, он считается устаревшим и скачивается заново. Флаг `--force` перекачивает всё независимо от того, что уже лежит на диске.
+
 #### Загрузка из файла
 
 Для загрузки файлов из списка, содержащегося в текстовом файле, используйте следующую команду:
@@ -225,6 +248,7 @@ https://disk.yandex.ru/d/example_folder/file.jpg НазваниеФайла
 - `-l, --link`: Ссылка на Яндекс.Диск, можно указать несколько раз.
 - `-f, --file`: Путь к текстовому файлу с ссылками на файлы Яндекс.Диска.
 - `-d, --download_location`: Путь для сохранения загруженных файлов (необязательно, по умолчанию текущая директория; имеет приоритет над путём в конце команды).
+- `--force`: Скачать всё заново, не продолжая загрузки и не пропуская готовые файлы.
 
 ### Примеры
 

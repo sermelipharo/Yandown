@@ -135,8 +135,16 @@ class Localization:
                 'ru': "Ошибка: Не удалось прочитать список ссылок из {file_path}: {error}"
             },
             'interrupted': {
-                'en': "Interrupted.",
-                'ru': "Прервано."
+                'en': "Interrupted. Run the same command again to resume.",
+                'ru': "Прервано. Повторите ту же команду, чтобы продолжить загрузку."
+            },
+            'file_already_downloaded': {
+                'en': "Skipping {name}: already downloaded.",
+                'ru': "Пропускаю {name}: уже скачан."
+            },
+            'file_size_mismatch': {
+                'en': "Warning: {name} is larger than the file on Yandex Disk, downloading it again.",
+                'ru': "Предупреждение: {name} больше файла на Яндекс.Диске, скачиваю заново."
             },
             'file_not_found': {
                 'en': "Error: No downloadable file found with the name {original_file_name} in the provided link: {link}",
@@ -199,13 +207,15 @@ class Localization:
                     'positional_link': 'One or more Yandex Disk URLs, optionally followed by the download location',
                     'link': 'Yandex Disk URL (can be repeated)',
                     'download_location': 'Download location on your PC',
-                    'file': 'Path to file with Yandex Disk URLs'
+                    'file': 'Path to file with Yandex Disk URLs',
+                    'force': 'Download everything again instead of resuming and skipping finished files'
                 },
                 'ru': {
                     'positional_link': 'Одна или несколько ссылок на Яндекс.Диск, последним аргументом можно указать папку для сохранения',
                     'link': 'Ссылка на Яндекс.Диск (можно указать несколько раз)',
                     'download_location': 'Место сохранения на вашем ПК',
-                    'file': 'Путь к файлу со ссылками на Яндекс.Диск'
+                    'file': 'Путь к файлу со ссылками на Яндекс.Диск',
+                    'force': 'Скачать всё заново, не продолжая загрузки и не пропуская готовые файлы'
                 }
             }
         }
@@ -214,13 +224,15 @@ class Localization:
         return messages[message_key][language]
 
 class YandexDiskDownloader:
-    def __init__(self, link, download_location, custom_name=None, flatten=False):
+    def __init__(self, link, download_location, custom_name=None, flatten=False, force=False):
         self.link = normalize_link(link)
         self.download_location = os.path.expanduser(download_location)
         self.custom_name = custom_name
         # When a single resource is downloaded into a directory that is already named
         # after it, save into that directory instead of creating builds/builds.
         self.flatten = flatten
+        # Re-download files that are already on disk instead of resuming or skipping them.
+        self.force = force
         self.web_base = base_url(self.link)
         self.localization = Localization()
 
@@ -297,15 +309,44 @@ class YandexDiskDownloader:
             offset += limit
         return items
 
-    def _download_file(self, download_url, save_path):
-        """Download a single file with progress bar."""
-        os.makedirs(os.path.dirname(save_path), exist_ok=True)
-        download_response = requests.get(download_url, stream=True)
-        total_size = int(download_response.headers.get('content-length', 0))
-        desc = os.path.basename(save_path)
+    def _download_file(self, download_url, save_path, expected_size=None):
+        """Download a file, skipping a finished one and resuming a partial one.
 
-        with open(save_path, "wb") as file, tqdm(
-            total=total_size or None, unit='B', unit_scale=True,
+        Yandex storage answers Range requests with 206, so an interrupted file can be
+        continued. The response code is checked before appending: a server that ignores
+        the Range header answers 200 with the whole file, and appending that would
+        corrupt what is already on disk.
+        """
+        os.makedirs(os.path.dirname(save_path), exist_ok=True)
+        desc = os.path.basename(save_path)
+        done_message = self.localization.get_message('file_already_downloaded')
+
+        local_size = os.path.getsize(save_path) if os.path.exists(save_path) else 0
+        if self.force:
+            local_size = 0
+        elif local_size and expected_size is not None:
+            if local_size == expected_size:
+                print(done_message.format(name=desc))
+                return
+            if local_size > expected_size:
+                print(self.localization.get_message('file_size_mismatch').format(name=desc))
+                local_size = 0
+
+        headers = {'Range': f'bytes={local_size}-'} if local_size else None
+        download_response = requests.get(download_url, headers=headers, stream=True)
+        if download_response.status_code == 416:
+            # nothing left to ask for: the local file is already at least as long
+            print(done_message.format(name=desc))
+            return
+        download_response.raise_for_status()
+
+        resuming = local_size > 0 and download_response.status_code == 206
+        if not resuming:
+            local_size = 0
+        total_size = int(download_response.headers.get('content-length', 0)) + local_size
+
+        with open(save_path, "ab" if resuming else "wb") as file, tqdm(
+            total=total_size or None, initial=local_size, unit='B', unit_scale=True,
             desc=desc, dynamic_ncols=True, miniters=1
         ) as pbar:
             for chunk in download_response.iter_content(chunk_size=1024):
@@ -330,7 +371,7 @@ class YandexDiskDownloader:
                     download_url = self._get_download_url(public_key, path=item_path)
                 if download_url:
                     save_path = os.path.join(save_dir, item_name)
-                    self._download_file(download_url, save_path)
+                    self._download_file(download_url, save_path, item.get('size'))
             elif item['type'] == 'dir':
                 sub_dir = os.path.join(save_dir, item_name)
                 self._download_folder(public_key, item_path, sub_dir)
@@ -437,7 +478,7 @@ class YandexDiskDownloader:
                 print(self.localization.get_message('album_item_url_error').format(name=item.get('name', '?')))
                 continue
             save_path = os.path.join(save_dir, self.safe_file_name(item['name']))
-            self._download_file(download_url, save_path)
+            self._download_file(download_url, save_path, item.get('size'))
 
         print(self.localization.get_message('album_complete').format(name=album_name))
         return True
@@ -521,15 +562,15 @@ class YandexDiskDownloader:
             save_path = os.path.join(self.download_location, safe_name)
 
             os.makedirs(self.download_location, exist_ok=True)
-            self._download_file(download_url, save_path)
+            self._download_file(download_url, save_path, resource.get('size'))
             print(self.localization.get_message('download_complete'))
             return True
 
-def download_link(link, download_location, custom_name=None, flatten=False):
+def download_link(link, download_location, custom_name=None, flatten=False, force=False):
     """Download one link, reporting any failure instead of raising it."""
     localization = Localization()
     try:
-        return YandexDiskDownloader(link, download_location, custom_name, flatten).download()
+        return YandexDiskDownloader(link, download_location, custom_name, flatten, force).download()
     except requests.RequestException as error:
         print(localization.get_message('network_error').format(link=link, error=error_text(error)))
     except OSError as error:
@@ -539,7 +580,7 @@ def download_link(link, download_location, custom_name=None, flatten=False):
     return False
 
 
-def download_from_file(file_path, download_location):
+def download_from_file(file_path, download_location, force=False):
     localization = Localization()
     try:
         with open(file_path, 'r') as file:
@@ -563,7 +604,7 @@ def download_from_file(file_path, download_location):
                 link, custom_name = line, None
 
             custom_name = custom_name.strip() if custom_name else None
-            if not download_link(link, download_location, custom_name):
+            if not download_link(link, download_location, custom_name, force=force):
                 succeeded = False
     return succeeded
 
@@ -575,6 +616,7 @@ if __name__ == "__main__":
     parser.add_argument('-l', '--link', dest='links', action='append', default=[], help=localization.get_message('arg_help')['link'])
     parser.add_argument('-d', '--download_location', type=str, help=localization.get_message('arg_help')['download_location'], default=None)
     parser.add_argument('-f', '--file', type=str, help=localization.get_message('arg_help')['file'])
+    parser.add_argument('--force', action='store_true', help=localization.get_message('arg_help')['force'])
 
     args = parser.parse_args()
 
@@ -595,11 +637,11 @@ if __name__ == "__main__":
 
     try:
         if args.file:
-            succeeded = download_from_file(args.file, download_location)
+            succeeded = download_from_file(args.file, download_location, args.force)
         elif links:
             succeeded = True
             for link in links:
-                if not download_link(link, download_location, flatten=len(links) == 1):
+                if not download_link(link, download_location, flatten=len(links) == 1, force=args.force):
                     succeeded = False
         else:
             print(localization.get_message('provide_link_or_file'))
