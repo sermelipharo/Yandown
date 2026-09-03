@@ -4,7 +4,24 @@
 
 ## English
 
-This script allows downloading files and folders from Yandex Disk using public links. The script can work with a single link or with a text file containing a list of links and file names. When a folder link is provided, all files are downloaded recursively, preserving the directory structure.
+This script allows downloading files, folders and albums from Yandex Disk using public links. It takes one or several links at once, or a text file containing a list of links and file names. When a folder link is provided, all files are downloaded recursively, preserving the directory structure.
+
+### Supported links
+
+Any regional Yandex Disk domain works — `disk.yandex.ru`, `.com`, `.by`, `.kz`, `.uz`, `.com.tr` and the rest, plus `disk.360.yandex.*` and the old `yadi.sk` shortener.
+
+| Link | Meaning |
+|---|---|
+| `https://disk.yandex.ru/i/<hash>` | a single public file |
+| `https://disk.yandex.ru/d/<hash>` | a public folder (downloaded recursively) |
+| `https://disk.yandex.ru/d/<hash>/Sub%20Folder/file.jpg` | a file or subfolder inside a public folder |
+| `https://disk.yandex.ru/a/<hash>` | a public album |
+| `https://disk.yandex.ru/client/aa/d_<hash>/` | web-client link — rewritten to `/d/<hash>` automatically (same for `i_` and `a_`) |
+| `https://disk.yandex.ru/public/?hash=<key>` | the old public-key form |
+
+Trailing slashes and query strings (`?utm_source=...`) are stripped, since the public API rejects them.
+
+Personal web-client links such as `https://disk.yandex.ru/client/disk/Documents` carry no public key and cannot be downloaded: share the file or folder first and use the resulting link.
 
 ### Requirements
 
@@ -35,6 +52,20 @@ Or simply:
 python yandown.py <link>
 ```
 
+#### Download several links at once
+
+```bash
+python yandown.py <link> <link> <link>
+```
+
+The last argument is used as the download location when it is not a link, so `-d` is optional:
+
+```bash
+python yandown.py <link> <link> ~/Downloads/materials
+```
+
+The download folder is created if it does not exist. When a single link is given and the destination folder is already named after the folder behind the link, its contents are saved straight into it instead of nesting `builds/builds`.
+
 #### Download from a file
 
 To download files from a list contained in a text file, use the following command:
@@ -56,9 +87,10 @@ https://disk.yandex.ru/d/example_folder/file.jpg CustomFileName
 
 ### Command line arguments
 
-- `-l, --link`: Link to a Yandex Disk file or folder.
+- `<links>`: One or more Yandex Disk links, optionally followed by the download location.
+- `-l, --link`: A Yandex Disk link, can be repeated.
 - `-f, --file`: Path to a text file with Yandex Disk links.
-- `-d, --download_location`: Path to save the downloaded files (optional, default is the current directory).
+- `-d, --download_location`: Path to save the downloaded files (optional, default is the current directory; takes precedence over a trailing path).
 
 ### Examples
 
@@ -78,6 +110,12 @@ python yandown.py -f "/path/to/links.txt" -d "/path/to/save"
 
 ```bash
 python yandown.py "https://disk.yandex.ru/i/example1"
+```
+
+#### Download several links into one folder
+
+```bash
+python yandown.py "https://disk.yandex.ru/d/example1" "https://disk.yandex.ru/d/example2" "/path/to/save"
 ```
 
 #### Download a folder
@@ -100,7 +138,24 @@ Album links (`/a/`) are not exposed through the public Yandex Disk API, so the s
 
 ## Русский
 
-Этот скрипт позволяет загружать файлы и папки с Яндекс.Диска по публичным ссылкам. Скрипт может работать как с одной ссылкой, так и с текстовым файлом, содержащим список ссылок и названий файлов. При указании ссылки на папку все файлы скачиваются рекурсивно с сохранением структуры директорий.
+Этот скрипт позволяет загружать файлы, папки и альбомы с Яндекс.Диска по публичным ссылкам. Скрипт принимает одну или несколько ссылок сразу, а также текстовый файл со списком ссылок и названий файлов. При указании ссылки на папку все файлы скачиваются рекурсивно с сохранением структуры директорий.
+
+### Поддерживаемые ссылки
+
+Работает любой региональный домен Яндекс.Диска — `disk.yandex.ru`, `.com`, `.by`, `.kz`, `.uz`, `.com.tr` и остальные, а также `disk.360.yandex.*` и старый сокращатель `yadi.sk`.
+
+| Ссылка | Что это |
+|---|---|
+| `https://disk.yandex.ru/i/<hash>` | один публичный файл |
+| `https://disk.yandex.ru/d/<hash>` | публичная папка (скачивается рекурсивно) |
+| `https://disk.yandex.ru/d/<hash>/Папка/file.jpg` | файл или подпапка внутри публичной папки |
+| `https://disk.yandex.ru/a/<hash>` | публичный альбом |
+| `https://disk.yandex.ru/client/aa/d_<hash>/` | ссылка веб-клиента — автоматически превращается в `/d/<hash>` (то же для `i_` и `a_`) |
+| `https://disk.yandex.ru/public/?hash=<key>` | старый формат с публичным ключом |
+
+Завершающий слэш и query-параметры (`?utm_source=...`) отбрасываются: публичный API их не принимает.
+
+Личные ссылки веб-клиента вида `https://disk.yandex.ru/client/disk/Documents` не содержат публичного ключа, и скачать по ним ничего нельзя: сначала поделитесь файлом или папкой и используйте полученную ссылку.
 
 ### Требования
 
@@ -131,6 +186,20 @@ python yandown.py -l <ссылка> -d <путь_для_сохранения>
 python yandown.py <ссылка>
 ```
 
+#### Загрузка нескольких ссылок сразу
+
+```bash
+python yandown.py <ссылка> <ссылка> <ссылка>
+```
+
+Последний аргумент считается папкой для сохранения, если он не похож на ссылку, — тогда `-d` не нужен:
+
+```bash
+python yandown.py <ссылка> <ссылка> ~/Downloads/материалы
+```
+
+Папка создаётся, если её нет. Если ссылка одна и папка назначения уже названа так же, как папка по ссылке, содержимое кладётся прямо в неё, без вложения вида `builds/builds`.
+
 #### Загрузка из файла
 
 Для загрузки файлов из списка, содержащегося в текстовом файле, используйте следующую команду:
@@ -152,9 +221,10 @@ https://disk.yandex.ru/d/example_folder/file.jpg НазваниеФайла
 
 ### Аргументы командной строки
 
-- `-l, --link`: Ссылка на файл или папку Яндекс.Диска.
+- `<ссылки>`: Одна или несколько ссылок на Яндекс.Диск, последним аргументом можно указать папку для сохранения.
+- `-l, --link`: Ссылка на Яндекс.Диск, можно указать несколько раз.
 - `-f, --file`: Путь к текстовому файлу с ссылками на файлы Яндекс.Диска.
-- `-d, --download_location`: Путь для сохранения загруженных файлов (необязательно, по умолчанию текущая директория).
+- `-d, --download_location`: Путь для сохранения загруженных файлов (необязательно, по умолчанию текущая директория; имеет приоритет над путём в конце команды).
 
 ### Примеры
 
@@ -174,6 +244,12 @@ python yandown.py -f "/path/to/links.txt" -d "/path/to/save"
 
 ```bash
 python yandown.py "https://disk.yandex.ru/i/example1"
+```
+
+#### Загрузка нескольких ссылок в одну папку
+
+```bash
+python yandown.py "https://disk.yandex.ru/d/example1" "https://disk.yandex.ru/d/example2" "/path/to/save"
 ```
 
 #### Загрузка папки
