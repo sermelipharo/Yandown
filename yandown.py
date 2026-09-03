@@ -252,16 +252,16 @@ class YandexDiskDownloader:
         return self.link, None
 
     def safe_file_name(self, name):
-        safe_name = re.sub(r'[\/:*?"<>|]', '_', name)
+        """Replace characters a file name cannot contain.
 
-        try:
-            with open(os.path.join(self.download_location, safe_name), 'w') as test_file:
-                pass
-            os.remove(os.path.join(self.download_location, safe_name))
-        except OSError:
+        This never touches the file system: probing by creating a file under the
+        download location reported every existing folder as invalid and truncated
+        whatever already had that name.
+        """
+        safe_name = re.sub(r'[\/:*?"<>|]', '_', name)
+        if safe_name != name:
             print(self.localization.get_message('safe_name_warning').format(name=name, safe_name=safe_name))
-            return safe_name
-        return name
+        return safe_name
 
     def set_locale(self):
         try:
