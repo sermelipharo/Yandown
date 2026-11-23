@@ -13,6 +13,10 @@ API_BASE = "https://cloud-api.yandex.net/v1/disk/public/resources"
 DEFAULT_WEB_BASE = "https://disk.yandex.ru"
 BROWSER_UA = ("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
               "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36")
+# (connect, read) seconds for every request: without a timeout a stalled connection
+# keeps the script waiting forever instead of reporting a network error.
+TIMEOUT = (15, 60)
+CHUNK_SIZE = 1024 * 1024
 
 # Yandex Disk is served from a lot of regional domains (disk.yandex.ru/.com/.by/.kz/
 # .com.tr/...), from disk.360.yandex.* and from the old yadi.sk shortener.
@@ -278,14 +282,14 @@ class YandexDiskDownloader:
         params = {"public_key": public_key, "limit": limit, "offset": offset}
         if path:
             params["path"] = path
-        return requests.get(API_BASE, params=params)
+        return requests.get(API_BASE, params=params, timeout=TIMEOUT)
 
     def _get_download_url(self, public_key, path=None):
         """Get direct download URL for a file."""
         params = {"public_key": public_key}
         if path:
             params["path"] = path
-        response = requests.get(API_BASE + "/download", params=params)
+        response = requests.get(API_BASE + "/download", params=params, timeout=TIMEOUT)
         if response.status_code == 200:
             return response.json().get("href")
         return None
@@ -302,11 +306,16 @@ class YandexDiskDownloader:
                     link=self.link, status_code=response.status_code))
                 return None
             data = response.json()
-            batch = data.get('_embedded', {}).get('items', [])
+            embedded = data.get('_embedded', {})
+            batch = embedded.get('items', [])
             if not batch:
                 break
             items.extend(batch)
-            offset += limit
+            # move by what actually came back (a page can be shorter than the limit)
+            # and stop at the reported total instead of asking for an empty page
+            offset += len(batch)
+            if offset >= embedded.get('total', float('inf')):
+                break
         return items
 
     def _download_file(self, download_url, save_path, expected_size=None):
@@ -333,7 +342,7 @@ class YandexDiskDownloader:
                 local_size = 0
 
         headers = {'Range': f'bytes={local_size}-'} if local_size else None
-        download_response = requests.get(download_url, headers=headers, stream=True)
+        download_response = requests.get(download_url, headers=headers, stream=True, timeout=TIMEOUT)
         if download_response.status_code == 416:
             # nothing left to ask for: the local file is already at least as long
             print(done_message.format(name=desc))
@@ -349,10 +358,9 @@ class YandexDiskDownloader:
             total=total_size or None, initial=local_size, unit='B', unit_scale=True,
             desc=desc, dynamic_ncols=True, miniters=1
         ) as pbar:
-            for chunk in download_response.iter_content(chunk_size=1024):
+            for chunk in download_response.iter_content(chunk_size=CHUNK_SIZE):
                 if chunk:
                     file.write(chunk)
-                    file.flush()
                     pbar.update(len(chunk))
 
     def _download_folder(self, public_key, path, save_dir):
@@ -399,7 +407,7 @@ class YandexDiskDownloader:
         way in is the same internal API the web client uses: the page embeds the
         first portion of items plus an sk token for further requests.
         """
-        response = session.get(self.link)
+        response = session.get(self.link, timeout=TIMEOUT)
         if response.status_code != 200:
             return None
         # A link can redirect between domains (yadi.sk -> disk.yandex.ru, regional
@@ -421,6 +429,7 @@ class YandexDiskDownloader:
             self.web_base + "/public/api/" + model,
             data=json.dumps(payload),
             headers={"Content-Type": "text/plain"},
+            timeout=TIMEOUT,
         )
         if response.status_code != 200:
             return None
@@ -478,7 +487,9 @@ class YandexDiskDownloader:
                 print(self.localization.get_message('album_item_url_error').format(name=item.get('name', '?')))
                 continue
             save_path = os.path.join(save_dir, self.safe_file_name(item['name']))
-            self._download_file(download_url, save_path, item.get('size'))
+            # album items keep their size in meta, not at the top level like the public API
+            size = item.get('size', item.get('meta', {}).get('size'))
+            self._download_file(download_url, save_path, size)
 
         print(self.localization.get_message('album_complete').format(name=album_name))
         return True
@@ -491,7 +502,7 @@ class YandexDiskDownloader:
         except OSError as error:
             print(self.localization.get_message('location_error').format(
                 location=self.download_location, error=error_text(error)))
-            return
+            return False
 
         parsed_path = urllib.parse.urlparse(self.link).path
         first_segment = parsed_path.strip('/').split('/')[0]
